@@ -1,0 +1,208 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\setlength{\emergencystretch}{2em}
+
+\title{Making MOSS-TTS-Realtime Stream on an 8\,GB Consumer GPU:\\
+Shape and Compilation Hygiene for Autoregressive Speech Synthesis}
+\author{Hongyun Du\\Independent Researcher\\\texttt{hdu1@my.nl.edu}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Autoregressive text-to-speech models are usually deployed on server GPUs, where the audio codec and the acoustic
+model can share one device. On an 8\,GB consumer card they cannot: the 1.7B talker of MOSS-TTS-Realtime occupies
+4.34\,GiB and its codec 6.6\,GB, so the codec must run on the CPU. Under that arrangement the model measured
+RTF~2.08 (synthesis seconds per audio second), which cannot sustain streaming. We report six conditions that
+together bring the same utterance to RTF~0.90 with 0.92\,s to first audio on a GeForce RTX 3060\,Ti. Four of the
+six concern tensor shapes, not computation: a growing KV cache, a growing attention mask, and an integer argument
+that made the compiler re-specialise on every frame. The remaining two are a missing Triton installation that had
+silently disabled compilation, and a decoder chunk size whose per-call cost dominated decoding. Quantising the
+talker to int8 reduces weights to 2.82\,GiB at the same steady-state speed, at the cost of a much longer first
+compilation. We describe the measurements, the wrong turns that preceded them, and what the numbers do not
+establish.
+\end{abstract}
+
+\section{Introduction}
+
+MOSS-TTS-Realtime is a 1.7B streaming text-to-speech model released under Apache-2.0. Its intended deployment is a
+server GPU large enough to hold both the talker and the 6.6\,GB audio tokenizer, which is the arrangement reported
+in the model card and the one used by inference stacks such as vLLM-Omni.
+
+Consumer hardware changes the problem. On an 8\,GB card the talker alone leaves roughly 3\,GiB, so the codec is
+pushed to the CPU. Streaming then requires the pipeline to produce audio faster than it plays back -- RTF below
+1.0 -- with one device doing the acoustic modelling and the CPU doing waveform reconstruction.
+
+We began from the model's own streaming harness and measured RTF~2.08 on a single sentence, with 1.02\,s to first
+audio. This note reports what the time was actually spent on, and the six conditions that brought the same
+utterance to RTF~0.90. Four of them are not optimisations in the usual sense: they are removals of shape changes
+that made \texttt{torch.compile} recompile instead of reuse.
+
+\section{Where the time goes}
+
+Before changing anything we instrumented a single frame, at 12.5 audio frames per second:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Component & Cost per frame \\
+\midrule
+Talker, 1.7B forward & 31\,ms \\
+Depth transformer, 16 codebook forwards & 96\,ms \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The talker is close to its memory-bandwidth floor: 3.4\,GB of bf16 weights read at roughly 448\,GB/s is 7.6\,ms,
+and the remainder is KV attention and kernel launch. The depth transformer, which decides sixteen codebook tokens
+per frame, cost three times as much. This is the opposite of the intuitive guess -- the large model is not the
+expensive one -- and it determined where compilation was worth applying.
+
+Decoding was measured separately. Decoding a 6.5\,s utterance in one call takes 0.49\,s on CPU and 0.46\,s on this
+GPU, a ratio of 1.1. The codec is not the bottleneck; the chunked decoding schedule was.
+
+\section{Six conditions}
+
+\paragraph{1. Triton must be installed.} Without a working Triton, inductor cannot run and \texttt{torch.compile}
+silently falls back to eager. On Windows this is the \texttt{triton-windows} package. After installing it, PyTorch's own availability check
+reports Triton as present, and every earlier ``compiled'' measurement turned out to have been eager: the compiler
+had been silently declining to run.
+
+\paragraph{2. Disable integer specialisation.} \texttt{step()} passes \texttt{gen\_step}, an integer that
+increments every frame. Dynamo specialises on integer arguments by default, so each frame created a new
+specialisation and triggered a recompile. With full compilation the model ran \emph{13 times slower} than eager.
+Setting \texttt{torch.\_dynamo.config.specialize\_int = False} reduced a whole utterance to two graphs.
+
+\paragraph{3. Compile the depth transformer, not the talker.} Given the profile above, compiling the 96\,ms
+component is worth doing and compiling the 31\,ms one is not; the latter also costs about 100\,s of warmup. The
+depth transformer already carries a \texttt{torch.compile} decorator, so the correct action is to leave it enabled
+and to keep the talker out of the compiled path.
+
+\paragraph{4. Pin the KV cache.} A \texttt{StaticCache} allocated once, with an explicit \texttt{cache\_position},
+stops the cache from growing and therefore stops the shapes from changing. Two details cost time to discover: the
+configuration must be \texttt{model.config.language\_config} (the top-level config has no
+\texttt{num\_hidden\_layers}), and the cache must be attached \emph{before} prefill, or the model replaces it with a
+\texttt{DynamicCache}.
+
+\paragraph{5. Fix the attention-mask length.} \texttt{step()} grows its mask with \texttt{torch.cat}, which changes
+its length every frame and defeats the previous condition. Preallocating a mask of \texttt{max\_cache\_len} and
+writing the new position in place keeps the shape constant. The length should be modest: a 4096-entry mask costs
+more attention work per frame than a 512-entry one and returns nothing.
+
+\paragraph{6. Decode in larger chunks.} The streaming decoder's cost is dominated by per-call overhead rather than
+by token count, so a small chunk size is actively harmful (Table~\ref{tab:chunk}).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrr}
+\toprule
+\texttt{chunk\_frames} & Decode time & First audio & RTF \\
+\midrule
+3 (default) & 4.50\,s & 0.45\,s & 1.43 \\
+\textbf{12} & 1.52\,s & \textbf{0.92\,s} & \textbf{0.90} \\
+15 & 1.25\,s & 1.05\,s & 0.86 \\
+20 & 0.94\,s & 1.30\,s & 0.83 \\
+40 & 0.63\,s & 2.40\,s & 0.76 \\
+\bottomrule
+\end{tabular}
+\caption{Decode chunk size trades time-to-first-audio against RTF. We chose 12: first audio under a second while
+remaining below 1.0.}
+\label{tab:chunk}
+\end{table}
+
+\section{Measurements}
+
+Table~\ref{tab:main} reports the same sentence before and after, and the effect of int8 weights. The int8 result
+contradicts the usual expectation that quantisation buys memory at the cost of speed: once the compile conditions
+apply, steady-state cost is unchanged, so the saving is purely in memory.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Configuration & First audio & RTF & Steady step & Talker memory \\
+\midrule
+Eager, as shipped & 1.02\,s & 2.08 & 109.4\,ms & 4.34\,GiB \\
+Six conditions, bf16 & 0.92\,s & 0.90 & 61.5\,ms & 4.34\,GiB \\
+Six conditions, int8 & 0.94--0.98 & 0.94--0.98 & 50.6\,ms & \textbf{2.82\,GiB} \\
+\bottomrule
+\end{tabular}
+\caption{Single sentence, RTX 3060\,Ti, codec on CPU. Third digit is noise: these are single runs.}
+\label{tab:main}
+\end{table}
+
+Quantisation has its own cost, and it is not the quantisation itself. Converting weights takes 0.2\,s; compiling
+the quantised graph took 818\,s cold and about 300\,s with a warm inductor cache, against 42\,s for bf16. A system
+that reports readiness after loading weights will therefore make its first user wait several minutes. We gate
+readiness on a completed synthesis instead.
+
+That gate has a subtlety worth stating: compilation is keyed by shape, and shape follows text length. Warming with
+a five-character sentence left the first real request paying 77\,s. Warming over short, typical and long sentences
+brought the first real request to 7.03\,s.
+
+For context, the same model on a rented 24\,GB A10 with the codec on the GPU and none of the above applied
+measured 698\,ms to first audio, 8.76\,s of generation for 6.56\,s of audio, and RTF~1.59. A larger card alone did
+not cross 1.0.
+
+\section{Negative results}
+
+Four conclusions we held, and had to abandon:
+
+\begin{itemize}
+\item \emph{``Windows cannot compile.''} It can; Triton was simply absent.
+\item \emph{``Compilation gives a 2.3$\times$ speedup.''} True on a micro-benchmark whose shapes had stabilised
+during warmup, and false end to end, where recompilation dominated.
+\item \emph{``Compile the whole model.''} This produced a 13$\times$ slowdown and, in one configuration, an
+818\,s first utterance.
+\item \emph{``Chunk size does not matter.''} This was an artefact of a measurement bug: the benchmark swapped a
+variable the measurement path did not use. Once the decoder was wired correctly, chunk size turned out to be the
+single largest remaining lever.
+\end{itemize}
+
+We record these because each was reached by a plausible measurement, and because the last one shows that an
+instrument can be wrong in a way that looks like a result.
+
+\section{What this does not establish}
+
+The numbers come from one machine, one model revision, one prompt set, and single runs per configuration. We make
+no statistical claim, and the third digit should be read as noise.
+
+We make no audio-quality claim for int8. It was judged by ear only. An autoregressive sampler at temperature 0.8
+produces a different performance each run, so two runs cannot be compared without fixing the seed; with the seed
+fixed, bf16 and int8 still diverge into different performances, which means the comparison a listener makes is
+between two valid samples rather than between an original and its distortion.
+
+Related work exists and some of it targets this model: vLLM-Omni has a change that batches matmul and embedding
+gathers in the MOSS talker, and work on Faster IndexTTS-2 accelerates a different streaming autoregressive TTS
+model. What is reported here is shape and compilation hygiene, not a new kernel.
+
+\section{Reproduction}
+
+A self-contained script accompanies this note. It takes the two model repositories as input, installs the six
+conditions, and prints first-audio latency, RTF, steady per-step cost, and the generation/decode split. Its output
+on the machine above, run from a clean directory:
+
+\begin{verbatim}
+pass 1: first 19726 ms  RTF 4.12  step 46.5 ms  decode 1.54 s
+pass 2: first   939 ms  RTF 0.93  step 46.9 ms  decode 1.58 s
+\end{verbatim}
+
+The first pass pays compilation; the second is the steady state. The split is also the diagnostic: a large
+\texttt{decode} figure points at condition six, a large \texttt{step} figure at conditions two to five.
+
+\begin{thebibliography}{9}
+\bibitem{moss} OpenMOSS-Team. \emph{MOSS-TTS-Realtime}. Hugging Face, Apache-2.0.
+\bibitem{vllmomni} vLLM-Omni, pull request 4221: \emph{Stacked audio ops: batched matmul and embedding gather in
+MOSS-TTS talker}.
+\bibitem{indextts} \emph{Faster IndexTTS-2: Accelerating and Streaming Autoregressive Zero-Shot Text-to-Speech
+Synthesis on GPUs}. arXiv:2607.21042.
+\bibitem{torchcompile} PyTorch Team. \emph{torch.compile} and \emph{torch.\_dynamo} documentation.
+\bibitem{staticcache} Hugging Face Transformers. \emph{Cache strategies: StaticCache and cache\_position}.
+\end{thebibliography}
+
+\end{document}
