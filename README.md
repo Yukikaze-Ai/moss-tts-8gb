@@ -172,5 +172,5 @@ recipe.py prints: `decode` large means condition 6, `step` large means condition
 
 ## Paper
 
-`paper/main.tex` is the same material as a 4-page technical report, ready to submit. Fill in the author block and
-compile with any LaTeX toolchain (`tectonic main.tex` works and needs no installation of a full TeX distribution).
+`paper/` holds the same material as a 4-page technical report: `main.tex` is the source, `main.pdf` the compiled
+output. Any LaTeX toolchain will rebuild it (`tectonic main.tex` needs no full TeX installation).

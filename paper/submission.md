@@ -1,6 +1,6 @@
 # arXiv submission sheet
 
-Paste these fields into the arXiv form. Nothing here needs editing except the code URL once the repository exists.
+Paste these fields into the arXiv form. Every field below is final.
 
 ## Title
 
@@ -23,7 +23,7 @@ Autoregressive text-to-speech models are usually deployed on server GPUs, where 
 ## Comments
 
 ```
-4 pages, 2 tables. Code and reproduction script: <REPO URL>
+4 pages, 2 tables. Code and reproduction script: https://github.com/Yukikaze-Ai/moss-tts-8gb
 ```
 
 ## Category and license
@@ -46,7 +46,7 @@ that fails to build is easier to fix before submitting than after.
 ## Order of operations
 
 1. Create the public repository and confirm the URL resolves.
-2. Replace `<REPO URL>` above and in the Comments field.
+2. Replace `https://github.com/Yukikaze-Ai/moss-tts-8gb` above and in the Comments field.
 3. Start a new submission, paste the fields, upload main.tex.
 4. Check the arXiv-generated PDF preview carefully -- it is built from source, not from our local build.
 5. Submit.
