@@ -46,7 +46,7 @@ that fails to build is easier to fix before submitting than after.
 ## Order of operations
 
 1. Create the public repository and confirm the URL resolves.
-2. Replace `https://github.com/Yukikaze-Ai/moss-tts-8gb` above and in the Comments field.
+2. The code URL is already filled in above; it resolves to a public repository.
 3. Start a new submission, paste the fields, upload main.tex.
 4. Check the arXiv-generated PDF preview carefully -- it is built from source, not from our local build.
 5. Submit.
