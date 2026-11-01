@@ -23,6 +23,11 @@ so int8 is not a speed-for-memory trade here: it is the same speed for 1.5 GiB l
 quantised graph takes 818 s to compile cold, about 300 s with a warm inductor cache — so a service should report
 "starting" until a real synthesis has completed.
 
+Whether int8 costs anything in quality is a separate question, and one that cannot be answered by listening to a
+sample: at a fixed seed the two precisions diverge into different performances (waveform correlation 0.016), and
+greedy decoding does not change that. [EVALUATION.md](EVALUATION.md) scores 20 sentences with CER, speaker
+similarity and UTMOS instead; all 40 clips are in `samples/eval/`.
+
 ## The six conditions
 
 Each one alone does nothing useful. That is the point.
