@@ -149,6 +149,40 @@ For context, the same model on a rented 24\,GB A10 with the codec on the GPU and
 measured 698\,ms to first audio, 8.76\,s of generation for 6.56\,s of audio, and RTF~1.59. A larger card alone did
 not cross 1.0.
 
+\subsection{What int8 costs in quality}
+
+Listening to one clip is not evidence, and the obvious comparison does not exist: at a fixed seed the two
+precisions produce different performances rather than an original and a distorted copy. Waveform correlation
+between bf16 and int8 was 0.016, and greedy decoding did not change it, because a small numeric difference flips
+one codebook token and the autoregressive path never returns to the bf16 trajectory. ``int8 reproduces bf16'' is
+therefore not a testable property.
+
+What is testable is whether each precision, scored on its own over a set of utterances, is of comparable quality.
+We rendered 20 Chinese sentences covering statements, questions, exclamations and both short and long lines, once
+per precision, at temperature 0.8 and a fixed seed, and scored three standard measures:
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Weights & CER (\%) & SECS & UTMOS & mean duration \\
+\midrule
+bf16 & 1.23 & 0.670 & 3.21 & 2.54\,s \\
+int8 & 0.56 & 0.672 & 3.29 & 2.55\,s \\
+\midrule
+difference & $-0.67$ & $+0.002$ & $+0.077$ & $+0.01$\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+CER comes from a Paraformer pass with punctuation removed, SECS from ECAPA-TDNN embeddings against the reference
+clip, and UTMOS from SpeechMOS. Thresholds were fixed before the run: no worse than $+1.0$ point CER, $-0.01$ SECS,
+$-0.05$ UTMOS. All three land inside them, and all three lean marginally toward int8, which at $n=20$ and a single
+seed is noise rather than an improvement. The defensible conclusion is that int8 is not measurably worse on
+intelligibility, speaker identity or predicted naturalness; it is not that it is better.
+
+The metric that would settle prosody is a listening test, which we did not run. CER cannot see a flattened
+delivery, and UTMOS is a predictor rather than a listener.
+
 \section{Negative results}
 
 Four conclusions we held, and had to abandon:
@@ -172,10 +206,9 @@ instrument can be wrong in a way that looks like a result.
 The numbers come from one machine, one model revision, one prompt set, and single runs per configuration. We make
 no statistical claim, and the third digit should be read as noise.
 
-We make no audio-quality claim for int8. It was judged by ear only. An autoregressive sampler at temperature 0.8
-produces a different performance each run, so two runs cannot be compared without fixing the seed; with the seed
-fixed, bf16 and int8 still diverge into different performances, which means the comparison a listener makes is
-between two valid samples rather than between an original and its distortion.
+The int8 comparison holds for 20 sentences, one seed and one voice. That is enough to catch a real regression and
+not enough to certify equality, and the duration column moves by 0.01\,s where 0.1\,s might be expected between
+two runs of the same configuration.
 
 Related work exists and some of it targets this model: vLLM-Omni has a change that batches matmul and embedding
 gathers in the MOSS talker, and work on Faster IndexTTS-2 accelerates a different streaming autoregressive TTS
