@@ -192,7 +192,7 @@ difference & $-0.67$ & $+0.002$ & $+0.077$ & $+0.01$\,s \\
 \end{center}
 
 CER comes from a Paraformer pass with punctuation removed, SECS from ECAPA-TDNN embeddings against the reference
-clip, and UTMOS from SpeechMOS. Thresholds were fixed before the run: no worse than $+1.0$ point CER, $-0.01$ SECS,
+clip, and UTMOS \cite{utmos} through its SpeechMOS implementation \cite{speechmos}. Thresholds were fixed before the run: no worse than $+1.0$ point CER, $-0.01$ SECS,
 $-0.05$ UTMOS. All three land inside them, and all three lean marginally toward int8, which at $n=20$ and a single
 seed is noise rather than an improvement. The defensible conclusion is that int8 is not measurably worse on
 intelligibility, speaker identity or predicted naturalness; it is not that it is better.
@@ -257,6 +257,10 @@ The first pass pays compilation; the second is the steady state. The split is al
 \bibitem{mosstokenizer} Y. Gong et al. \emph{MOSS-Audio-Tokenizer: Scaling Audio Tokenizers for Future Audio
 Foundation Models}. arXiv:2602.10934, 2026.
 \bibitem{torchcompile} PyTorch Team. \emph{torch.compile} and \emph{torch.\_dynamo} documentation.
+\bibitem{utmos} T. Saeki, D. Xin, W. Nakata, T. Koriyama, S. Takamichi, H. Saruwatari.
+\emph{UTMOS: UTokyo-SaruLab System for VoiceMOS Challenge 2022}. INTERSPEECH 2022; arXiv:2204.02152.
+\bibitem{speechmos} T. Saeki. \emph{SpeechMOS}: MOS prediction toolkit implementing UTMOS.
+\url{https://github.com/tarepan/SpeechMOS}.
 \bibitem{staticcache} Hugging Face Transformers. \emph{Cache strategies: StaticCache and cache\_position}.
 \end{thebibliography}
 
