@@ -43,6 +43,22 @@ audio. This note reports what the time was actually spent on, and the six condit
 utterance to RTF~0.90. Four of them are not optimisations in the usual sense: they are removals of shape changes
 that made \texttt{torch.compile} recompile instead of reuse.
 
+\section{The system under study}
+
+MOSS-TTS-Realtime is a streaming text-to-speech model \cite{mosstts} built on the MOSS audio tokenizer
+\cite{mosstokenizer}. Audio is represented as 16 codebooks at 12.5 frames per second. The model has three parts that
+matter here:
+
+\begin{itemize}
+\item a 1.7B talker, which advances the frame loop and decides the first codebook token;
+\item a depth transformer, which produces the remaining fifteen codebook tokens for each frame with one forward
+pass per codebook;
+\item an audio tokenizer (\emph{codec}) that reconstructs waveform from the codebooks.
+\end{itemize}
+
+The talker and the depth transformer together occupy 4.34\,GiB of bf16 weights, and the codec 6.6\,GB. On an
+8\,GB card those do not fit together, which is what shapes the rest of this note.
+
 \section{Where the time goes}
 
 Before changing anything we instrumented a single frame, at 12.5 audio frames per second:
@@ -150,6 +166,7 @@ measured 698\,ms to first audio, 8.76\,s of generation for 6.56\,s of audio, and
 not cross 1.0.
 
 \subsection{What int8 costs in quality}
+\label{sec:int8}
 
 Listening to one clip is not evidence, and the obvious comparison does not exist: at a fixed seed the two
 precisions produce different performances rather than an original and a distorted copy. Waveform correlation
@@ -210,9 +227,18 @@ The int8 comparison holds for 20 sentences, one seed and one voice. That is enou
 not enough to certify equality, and the duration column moves by 0.01\,s where 0.1\,s might be expected between
 two runs of the same configuration.
 
-Related work exists and some of it targets this model: vLLM-Omni has a change that batches matmul and embedding
-gathers in the MOSS talker, and work on Faster IndexTTS-2 accelerates a different streaming autoregressive TTS
-model. What is reported here is shape and compilation hygiene, not a new kernel.
+Work closest to this note is on the same model. vLLM-Omni carries a change that batches matmul and embedding
+gathers inside the MOSS talker \cite{vllmomni}, attacking per-kernel cost rather than tensor shapes; the two are
+complementary, and either could be applied on top of the other. Community GGUF quantisations of the model exist for
+llama.cpp, which makes the deployment question in \S\ref{sec:int8} already partly answered for CPU-bound setups.
+
+For the broader genre -- accelerating autoregressive speech synthesis so that it can stream -- Faster IndexTTS-2
+\cite{indextts} reports a similar exercise on a different model, and the general techniques we rely on are
+\texttt{torch.compile}/Inductor \cite{torchcompile} and Hugging Face's cache strategies \cite{staticcache}.
+
+We claim no new kernel and no new algorithm. What is reported is a set of conditions under which an existing
+implementation reaches RTF below one on one consumer card, together with the measurements that show which condition
+matters and which does not.
 
 \section{Reproduction}
 
@@ -229,7 +255,9 @@ The first pass pays compilation; the second is the steady state. The split is al
 \texttt{decode} figure points at condition six, a large \texttt{step} figure at conditions two to five.
 
 \begin{thebibliography}{9}
-\bibitem{moss} OpenMOSS-Team. \emph{MOSS-TTS-Realtime}. Hugging Face, Apache-2.0.
+\bibitem{mosstts} Y. Gong et al. \emph{MOSS-TTS Technical Report}. arXiv:2603.18090, 2026.
+\bibitem{mosstokenizer} Y. Gong et al. \emph{MOSS-Audio-Tokenizer: Scaling Audio Tokenizers for Future Audio
+Foundation Models}. arXiv:2602.10934, 2026.
 \bibitem{vllmomni} vLLM-Omni, pull request 4221: \emph{Stacked audio ops: batched matmul and embedding gather in
 MOSS-TTS talker}.
 \bibitem{indextts} \emph{Faster IndexTTS-2: Accelerating and Streaming Autoregressive Zero-Shot Text-to-Speech
