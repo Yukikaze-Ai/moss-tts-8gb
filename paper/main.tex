@@ -223,22 +223,20 @@ instrument can be wrong in a way that looks like a result.
 The numbers come from one machine, one model revision, one prompt set, and single runs per configuration. We make
 no statistical claim, and the third digit should be read as noise.
 
+We do not survey concurrent work on this model. These measurements were made independently, and any optimisation
+published elsewhere for MOSS-TTS-Realtime is neither evaluated nor compared against here.
+
 The int8 comparison holds for 20 sentences, one seed and one voice. That is enough to catch a real regression and
 not enough to certify equality, and the duration column moves by 0.01\,s where 0.1\,s might be expected between
 two runs of the same configuration.
 
-Work closest to this note is on the same model. vLLM-Omni carries a change that batches matmul and embedding
-gathers inside the MOSS talker \cite{vllmomni}, attacking per-kernel cost rather than tensor shapes; the two are
-complementary, and either could be applied on top of the other. Community GGUF quantisations of the model exist for
-llama.cpp, which makes the deployment question in \S\ref{sec:int8} already partly answered for CPU-bound setups.
-
-For the broader genre -- accelerating autoregressive speech synthesis so that it can stream -- Faster IndexTTS-2
-\cite{indextts} reports a similar exercise on a different model, and the general techniques we rely on are
+This note is an engineering report on one implementation, and it does not attempt a survey of concurrent work.
+The model itself is described in \cite{mosstts,mosstokenizer}; the general techniques relied on here are
 \texttt{torch.compile}/Inductor \cite{torchcompile} and Hugging Face's cache strategies \cite{staticcache}.
 
 We claim no new kernel and no new algorithm. What is reported is a set of conditions under which an existing
-implementation reaches RTF below one on one consumer card, together with the measurements that show which condition
-matters and which does not.
+implementation reaches RTF below one on one consumer card, together with the measurements that show which
+condition matters and which does not.
 
 \section{Reproduction}
 
@@ -258,10 +256,6 @@ The first pass pays compilation; the second is the steady state. The split is al
 \bibitem{mosstts} Y. Gong et al. \emph{MOSS-TTS Technical Report}. arXiv:2603.18090, 2026.
 \bibitem{mosstokenizer} Y. Gong et al. \emph{MOSS-Audio-Tokenizer: Scaling Audio Tokenizers for Future Audio
 Foundation Models}. arXiv:2602.10934, 2026.
-\bibitem{vllmomni} vLLM-Omni, pull request 4221: \emph{Stacked audio ops: batched matmul and embedding gather in
-MOSS-TTS talker}.
-\bibitem{indextts} \emph{Faster IndexTTS-2: Accelerating and Streaming Autoregressive Zero-Shot Text-to-Speech
-Synthesis on GPUs}. arXiv:2607.21042.
 \bibitem{torchcompile} PyTorch Team. \emph{torch.compile} and \emph{torch.\_dynamo} documentation.
 \bibitem{staticcache} Hugging Face Transformers. \emph{Cache strategies: StaticCache and cache\_position}.
 \end{thebibliography}
