@@ -45,18 +45,24 @@ that made \texttt{torch.compile} recompile instead of reuse.
 
 \section{The system under study}
 
-MOSS-TTS-Realtime is a streaming text-to-speech model \cite{mosstts} built on the MOSS audio tokenizer
-\cite{mosstokenizer}. Audio is represented as 16 codebooks at 12.5 frames per second. The model has three parts that
-matter here:
+MOSS-TTS-Realtime is a streaming text-to-speech model released on Hugging Face \cite{mossrealtimecard}, built on the
+MOSS audio tokenizer \cite{mosstokenizer}. The tokenizer compresses 24\,kHz audio to a 12.5\,Hz frame rate using a
+32-layer residual vector quantizer with variable bitrate \cite{mosstokenizer}; the streaming implementation draws on
+16 of those codebook channels per frame, a figure taken from the released configuration
+(\texttt{channels=16}) rather than from a paper.
+
+The model has three parts that matter here, sized from the released configuration rather than from a publication:
 
 \begin{itemize}
-\item a 1.7B talker, which advances the frame loop and decides the first codebook token;
-\item a depth transformer, which produces the remaining fifteen codebook tokens for each frame with one forward
-pass per codebook;
-\item an audio tokenizer (\emph{codec}) that reconstructs waveform from the codebooks.
+\item a talker with 28 transformer layers at width 2048, the 1.7B-parameter member of this family, which advances the
+frame loop and decides the first codebook token;
+\item a frame-local transformer, four layers deep (\texttt{local\_transformer} in the code), which produces the
+remaining fifteen codebook tokens for each frame with one forward pass per codebook;
+\item an audio tokenizer (\emph{codec}) with 1.6 billion parameters, which reconstructs waveform from the codebooks
+\cite{mosstokenizer}.
 \end{itemize}
 
-The talker and the depth transformer together occupy 4.34\,GiB of bf16 weights, and the codec 6.6\,GB. On an
+The talker and the local transformer together occupy 4.34\,GiB of bf16 weights, and the codec 6.6\,GB. On an
 8\,GB card those do not fit together, which is what shapes the rest of this note.
 
 \section{Where the time goes}
@@ -69,13 +75,13 @@ Before changing anything we instrumented a single frame, at 12.5 audio frames pe
 Component & Cost per frame \\
 \midrule
 Talker, 1.7B forward & 31\,ms \\
-Depth transformer, 16 codebook forwards & 96\,ms \\
+Local transformer, 16 codebook forwards & 96\,ms \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 The talker is close to its memory-bandwidth floor: 3.4\,GB of bf16 weights read at roughly 448\,GB/s is 7.6\,ms,
-and the remainder is KV attention and kernel launch. The depth transformer, which decides sixteen codebook tokens
+and the remainder is KV attention and kernel launch. The local transformer, which decides sixteen codebook tokens
 per frame, cost three times as much. This is the opposite of the intuitive guess -- the large model is not the
 expensive one -- and it determined where compilation was worth applying.
 
@@ -94,9 +100,9 @@ increments every frame. Dynamo specialises on integer arguments by default, so e
 specialisation and triggered a recompile. With full compilation the model ran \emph{13 times slower} than eager.
 Setting \texttt{torch.\_dynamo.config.specialize\_int = False} reduced a whole utterance to two graphs.
 
-\paragraph{3. Compile the depth transformer, not the talker.} Given the profile above, compiling the 96\,ms
+\paragraph{3. Compile the local transformer, not the talker.} Given the profile above, compiling the 96\,ms
 component is worth doing and compiling the 31\,ms one is not; the latter also costs about 100\,s of warmup. The
-depth transformer already carries a \texttt{torch.compile} decorator, so the correct action is to leave it enabled
+local transformer already carries a \texttt{torch.compile} decorator, so the correct action is to leave it enabled
 and to keep the talker out of the compiled path.
 
 \paragraph{4. Pin the KV cache.} A \texttt{StaticCache} allocated once, with an explicit \texttt{cache\_position},
@@ -253,7 +259,8 @@ The first pass pays compilation; the second is the steady state. The split is al
 \texttt{decode} figure points at condition six, a large \texttt{step} figure at conditions two to five.
 
 \begin{thebibliography}{9}
-\bibitem{mosstts} Y. Gong et al. \emph{MOSS-TTS Technical Report}. arXiv:2603.18090, 2026.
+\bibitem{mossrealtimecard} OpenMOSS-Team. \emph{MOSS-TTS-Realtime} model card.
+\url{https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Realtime}. Apache-2.0.
 \bibitem{mosstokenizer} Y. Gong et al. \emph{MOSS-Audio-Tokenizer: Scaling Audio Tokenizers for Future Audio
 Foundation Models}. arXiv:2602.10934, 2026.
 \bibitem{torchcompile} PyTorch Team. \emph{torch.compile} and \emph{torch.\_dynamo} documentation.
