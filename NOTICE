@@ -14,3 +14,6 @@ This work describes experiments with MOSS-TTS-Realtime
 (https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Realtime), which is
 itself Apache-2.0. No code from that project is redistributed here;
 recipe.py imports it at runtime.
+The contents of paper/ (LaTeX sources, figures, and the compiled PDF) are
+licensed under CC BY 4.0 as well, and NOT under the Apache License 2.0 that
+covers the rest of this repository. See paper/LICENSE for the full text.
